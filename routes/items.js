@@ -28,30 +28,13 @@ router.get('/', (req, res) => {
         filteredList = filteredList.filter(item =>
             item.value.toLowerCase().includes(searchKey)
         );
-
-        // Правильная числовая сортировка для элементов с числами
-        filteredList.sort((a, b) => {
-            // Извлекаем числовые значения из строк
-            const aMatch = a.value.match(/\d+/);
-            const bMatch = b.value.match(/\d+/);
-
-            if (aMatch && bMatch) {
-                const aNum = parseInt(aMatch[0], 10);
-                const bNum = parseInt(bMatch[0], 10);
-                return aNum - bNum;
-            }
-
-            return a.numericValue - b.numericValue;
-        });
-    } else {
-        filteredList.sort((a, b) => {
-            return a.numericValue - b.numericValue;
-        });
     }
+    filteredList.sort((a, b) => {
+        return a.numericValue - b.numericValue;
+    });
 
-    // Применяем пользовательский порядок только если нет поиска или есть заранее сохраненный порядок для этого поискового запроса
     if (shouldUseStoredOrder) {
-        if (search && state.searchFilters[searchKey] && state.searchFilters[searchKey].length > 0) {
+        if (search && state.searchFilters[searchKey]) {
             const searchOrderMap = new Map();
             const customOrder = state.searchFilters[searchKey];
 
@@ -164,18 +147,49 @@ router.post('/save-state', (req, res) => {
     const { selectedIds = [], customOrder = [], orderChanges = null, search = '' } = req.body;
     const searchKey = search ? search.toLowerCase() : '';
 
-    // Сохраняем выбранные ID
     state.selectedIds = [...new Set(selectedIds)];
 
-    // Если активен поиск и передан пустой search, значит клиент решил не сохранять порядок для поиска
-    if (search === '') {
-        // Используем только сохранение основного порядка или выбранных элементов
-        if (customOrder && customOrder.length > 0) {
+    if (customOrder && customOrder.length > 0) {
+        if (search) {
+            state.searchFilters[searchKey] = [...new Set(customOrder)];
+        } else {
             state.customOrder = [...new Set(customOrder)];
         }
-        else if (orderChanges && !search) {
-            const { itemId, oldIndex, newIndex } = orderChanges;
+    }
+    else if (orderChanges) {
+        const { itemId, oldIndex, newIndex } = orderChanges;
 
+        if (search) {
+            if (!state.searchFilters[searchKey]) {
+                const filteredItems = fullList
+                    .filter(item => item.value.toLowerCase().includes(searchKey))
+                    .sort((a, b) => a.numericValue - b.numericValue);
+
+                state.searchFilters[searchKey] = filteredItems.map(item => item.id);
+            }
+
+            let currentOrder = [...state.searchFilters[searchKey]];
+
+            if (oldIndex !== newIndex && itemId) {
+                if (!currentOrder.includes(itemId)) {
+                    const filteredItems = fullList
+                        .filter(item => item.value.toLowerCase().includes(searchKey))
+                        .sort((a, b) => a.numericValue - b.numericValue)
+                        .map(item => item.id);
+
+                    currentOrder = filteredItems;
+                }
+
+                currentOrder = currentOrder.filter(id => id !== itemId);
+
+                if (newIndex >= 0 && newIndex <= currentOrder.length) {
+                    currentOrder.splice(newIndex, 0, itemId);
+                } else {
+                    currentOrder.push(itemId);
+                }
+                state.searchFilters[searchKey] = currentOrder;
+            }
+        } else {
             if (state.customOrder.length === 0) {
                 state.customOrder = fullList.map(item => item.id);
             }
@@ -190,10 +204,6 @@ router.post('/save-state', (req, res) => {
                 }
             }
         }
-    }
-    // Сохраняем состояние для конкретного поискового запроса
-    else if (search && customOrder && customOrder.length > 0) {
-        state.searchFilters[searchKey] = [...new Set(customOrder)];
     }
 
     res.sendStatus(200);
