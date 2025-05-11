@@ -1,73 +1,6 @@
 const express = require('express');
 const router = express.Router();
 
-// Создаем массив из 1,000,000 элементов
-let fullList = Array.from({ length: 1000000 }, (_, i) => ({
-    id: i + 1,
-    value: `Элемент ${i + 1}`,
-    position: i + 1,
-    numericValue: i + 1
-}));
-
-// Состояние приложения
-let state = {
-    selectedIds: [],
-    customOrder: [],
-    searchFilters: {}
-};
-
-router.get('/', (req, res) => {
-    const { search = '', offset = 0, limit = 20, useStoredOrder = 'true' } = req.query;
-    const numOffset = parseInt(offset, 10);
-    const numLimit = parseInt(limit, 10);
-    const searchKey = search.toLowerCase();
-
-    let filteredList = [...fullList];
-    if (search) {
-        filteredList = filteredList.filter(item =>
-            item.value.toLowerCase().includes(searchKey)
-        );
-    }
-
-    // Сортировка по умолчанию
-    filteredList.sort((a, b) => a.numericValue - b.numericValue);
-
-    // Нарезаем текущую страницу
-    let pagedItems = filteredList.slice(numOffset, numOffset + numLimit);
-
-    // Применяем сохранённый порядок только к текущей странице
-    if (useStoredOrder === 'true' && search && state.searchFilters[searchKey]) {
-        const changes = state.searchFilters[searchKey];
-
-        const applyChange = (arr, { itemId, newIndex }) => {
-            const currentIndex = arr.findIndex(x => x.id === itemId);
-            if (currentIndex === -1) return;
-            const [el] = arr.splice(currentIndex, 1);
-            const ni = Math.max(0, Math.min(newIndex, arr.length));
-            arr.splice(ni, 0, el);
-        };
-
-        for (const change of changes) {
-            applyChange(pagedItems, change);
-        }
-    }
-
-    const itemsWithSelection = pagedItems.map(item => ({
-        ...item,
-        selected: state.selectedIds.includes(item.id)
-    }));
-
-    res.json({
-        items: itemsWithSelection,
-        hasMore: numOffset + numLimit < filteredList.length,
-        total: filteredList.length,
-        search: search
-    });
-});
-
-const express = require('express');
-const router = express.Router();
-
 // Создаем массив из 1 000 000 элементов
 let fullList = Array.from({ length: 1000000 }, (_, i) => ({
     id: i + 1,
@@ -80,7 +13,7 @@ let fullList = Array.from({ length: 1000000 }, (_, i) => ({
 let state = {
     selectedIds: [],
     customOrder: [],
-    searchFilters: {} // теперь храним не массив id, а массив изменений: [{ itemId, oldIndex, newIndex }]
+    searchFilters: {}
 };
 
 // GET /items
@@ -97,13 +30,9 @@ router.get('/', (req, res) => {
         );
     }
 
-    // Сортировка по умолчанию
     filteredList.sort((a, b) => a.numericValue - b.numericValue);
-
-    // Нарезаем текущую страницу
     let pagedItems = filteredList.slice(numOffset, numOffset + numLimit);
 
-    // Применяем сохранённый порядок только к текущей странице
     if (useStoredOrder === 'true' && search && state.searchFilters[searchKey]) {
         const changes = state.searchFilters[searchKey];
 
