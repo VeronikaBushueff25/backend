@@ -20,6 +20,7 @@ router.get('/', (req, res) => {
     const { search = '', offset = 0, limit = 20, useStoredOrder = 'true' } = req.query;
     const numOffset = parseInt(offset, 10);
     const numLimit = parseInt(limit, 10);
+    const shouldUseStoredOrder = useStoredOrder === 'true';
     const searchKey = search.toLowerCase();
 
     let filteredList = [...fullList];
@@ -28,36 +29,81 @@ router.get('/', (req, res) => {
             item.value.toLowerCase().includes(searchKey)
         );
     }
+    filteredList.sort((a, b) => {
+        return a.numericValue - b.numericValue;
+    });
 
-    filteredList.sort((a, b) => a.numericValue - b.numericValue);
+    if (shouldUseStoredOrder) {
+        if (search && state.searchFilters[searchKey]) {
+            const searchOrderMap = new Map();
+            const customOrder = state.searchFilters[searchKey];
 
-    let pagedItems = filteredList.slice(numOffset, numOffset + numLimit);
+            customOrder.forEach((id, index) => {
+                searchOrderMap.set(id, index);
+            });
 
-    if (useStoredOrder === 'true' && search && state.searchFilters[searchKey]) {
-        const changes = state.searchFilters[searchKey];
+            const customOrderedItems = [];
+            const remainingItems = [];
 
-        const applyChange = (arr, { itemId, newIndex }) => {
-            const currentIndex = arr.findIndex(x => x.id === itemId);
-            if (currentIndex === -1) return;
-            const [el] = arr.splice(currentIndex, 1);
-            const ni = Math.max(0, Math.min(newIndex, arr.length));
-            arr.splice(ni, 0, el);
-        };
+            filteredList.forEach(item => {
+                if (searchOrderMap.has(item.id)) {
+                    customOrderedItems.push(item);
+                } else {
+                    remainingItems.push(item);
+                }
+            });
 
-        for (const change of changes) {
-            applyChange(pagedItems, change);
+            customOrderedItems.sort((a, b) => {
+                return searchOrderMap.get(a.id) - searchOrderMap.get(b.id);
+            });
+
+            filteredList = [...customOrderedItems, ...remainingItems];
+        } else if (state.customOrder.length > 0 && !search) {
+            const positionMap = new Map();
+            state.customOrder.forEach((id, index) => {
+                positionMap.set(id, index);
+            });
+
+            const customOrderedItems = [];
+            const remainingItems = [];
+
+            filteredList.forEach(item => {
+                if (positionMap.has(item.id)) {
+                    customOrderedItems.push(item);
+                } else {
+                    remainingItems.push(item);
+                }
+            });
+
+            customOrderedItems.sort((a, b) => {
+                return positionMap.get(a.id) - positionMap.get(b.id);
+            });
+
+            filteredList = [...customOrderedItems, ...remainingItems];
         }
     }
 
-    const itemsWithSelection = pagedItems.map(item => ({
+    const totalCount = filteredList.length;
+    const pagedItems = filteredList.slice(numOffset, numOffset + numLimit);
+
+    const uniqueItemIds = new Set();
+    const uniqueItems = pagedItems.filter(item => {
+        if (uniqueItemIds.has(item.id)) {
+            return false;
+        }
+        uniqueItemIds.add(item.id);
+        return true;
+    });
+
+    const itemsWithSelection = uniqueItems.map(item => ({
         ...item,
         selected: state.selectedIds.includes(item.id)
     }));
 
     res.json({
         items: itemsWithSelection,
-        hasMore: numOffset + numLimit < filteredList.length,
-        total: filteredList.length,
+        hasMore: numOffset + numLimit < totalCount,
+        total: totalCount,
         search: search
     });
 });
