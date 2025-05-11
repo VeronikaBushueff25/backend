@@ -6,15 +6,24 @@ let fullList = Array.from({ length: 1000000 }, (_, i) => ({
     id: i + 1,
     value: `Элемент ${i + 1}`,
     position: i + 1,
+    numericValue: i + 1
 }));
 
 // Состояние приложения
 let state = {
     selectedIds: [],
     customOrder: [],
-    // Добавляем хранение информации о порядке в рамках поиска
     searchFilters: {}
 };
+
+// Функция для создания числовых эквивалентов для сортировки
+function extractNumericValue(value) {
+    const matches = value.match(/Элемент (\d+)/);
+    if (matches && matches[1]) {
+        return parseInt(matches[1], 10);
+    }
+    return Infinity;
+}
 
 // GET /items?search=...&offset=...&limit=...
 router.get('/', (req, res) => {
@@ -25,44 +34,60 @@ router.get('/', (req, res) => {
     const searchKey = search.toLowerCase();
 
     let filteredList = [...fullList];
-
-    // Сначала фильтруем по поиску
     if (search) {
         filteredList = filteredList.filter(item =>
             item.value.toLowerCase().includes(searchKey)
         );
+
+        filteredList.sort((a, b) => {
+            return a.numericValue - b.numericValue;
+        });
     }
 
     // Применяем пользовательский порядок, если он существует и запрошен
     if (shouldUseStoredOrder) {
         if (search && state.searchFilters[searchKey]) {
-            // Используем порядок, специфичный для текущего поискового запроса
             const searchOrderMap = new Map();
-            state.searchFilters[searchKey].forEach((id, index) => {
+            const customOrder = state.searchFilters[searchKey];
+
+            customOrder.forEach((id, index) => {
                 searchOrderMap.set(id, index);
             });
 
+            // Сортируем с учетом пользовательского порядка
             filteredList.sort((a, b) => {
-                const posA = searchOrderMap.has(a.id) ? searchOrderMap.get(a.id) : a.position;
-                const posB = searchOrderMap.has(b.id) ? searchOrderMap.get(b.id) : b.position;
-                return posA - posB;
+                const hasA = searchOrderMap.has(a.id);
+                const hasB = searchOrderMap.has(b.id);
+
+                if (hasA && hasB) {
+                    return searchOrderMap.get(a.id) - searchOrderMap.get(b.id);
+                } else if (hasA) {
+                    return -1;
+                } else if (hasB) {
+                    return 1;
+                } else {
+                    return a.numericValue - b.numericValue;
+                }
             });
         } else if (state.customOrder.length > 0 && !search) {
-            // Для полного списка (без поиска) используем общий порядок
             const positionMap = new Map();
             state.customOrder.forEach((id, index) => {
                 positionMap.set(id, index);
             });
 
             filteredList.sort((a, b) => {
-                const posA = positionMap.has(a.id) ? positionMap.get(a.id) : Infinity;
-                const posB = positionMap.has(b.id) ? positionMap.get(b.id) : Infinity;
+                const hasA = positionMap.has(a.id);
+                const hasB = positionMap.has(b.id);
 
-                if (posA === Infinity && posB === Infinity) {
-                    // Оба элемента не в пользовательском порядке, используем исходный порядок
-                    return a.position - b.position;
+                if (hasA && hasB) {
+                    return positionMap.get(a.id) - positionMap.get(b.id);
+                } else if (hasA) {
+                    return -1;
+                } else if (hasB) {
+                    return 1;
+                } else {
+                    return a.numericValue - b.numericValue;
                 }
-                return posA - posB;
             });
         }
     }
@@ -70,6 +95,7 @@ router.get('/', (req, res) => {
     const totalCount = filteredList.length;
     const pagedItems = filteredList.slice(numOffset, numOffset + numLimit);
 
+    // Проверяем на дубликаты
     const uniqueItemIds = new Set();
     const uniqueItems = pagedItems.filter(item => {
         if (uniqueItemIds.has(item.id)) {
@@ -88,7 +114,7 @@ router.get('/', (req, res) => {
         items: itemsWithSelection,
         hasMore: numOffset + numLimit < totalCount,
         total: totalCount,
-        search: search // Передаем текущий поисковый запрос
+        search: search
     });
 });
 
@@ -137,10 +163,8 @@ router.post('/save-state', (req, res) => {
 
     if (customOrder && customOrder.length > 0) {
         if (search) {
-            // Сохраняем порядок для конкретного поискового запроса
             state.searchFilters[searchKey] = [...new Set(customOrder)];
         } else {
-            // Сохраняем общий порядок (без поиска)
             state.customOrder = [...new Set(customOrder)];
         }
     }
@@ -148,40 +172,45 @@ router.post('/save-state', (req, res) => {
         const { itemId, oldIndex, newIndex } = orderChanges;
 
         if (search) {
-            // Работаем с порядком для текущего поискового запроса
             if (!state.searchFilters[searchKey]) {
-                // Если еще нет сохраненного порядка для этого поиска,
-                // создаем его из отфильтрованных элементов
-                const filteredIds = fullList
+                const filteredItems = fullList
                     .filter(item => item.value.toLowerCase().includes(searchKey))
-                    .map(item => item.id);
+                    .sort((a, b) => a.numericValue - b.numericValue);
 
-                state.searchFilters[searchKey] = filteredIds;
+                state.searchFilters[searchKey] = filteredItems.map(item => item.id);
             }
 
-            const currentOrder = [...state.searchFilters[searchKey]];
+            let currentOrder = state.searchFilters[searchKey];
 
             // Выполняем изменение порядка
             if (oldIndex !== newIndex && itemId) {
-                // Удаляем элемент со старой позиции
-                const filteredOrder = currentOrder.filter(id => id !== itemId);
+                if (!currentOrder.includes(itemId)) {
+                    const item = fullList.find(item => item.id === itemId);
+                    if (item) {
+                        const filteredItems = fullList
+                            .filter(item => item.value.toLowerCase().includes(searchKey))
+                            .sort((a, b) => a.numericValue - b.numericValue)
+                            .map(item => item.id);
 
-                // Вставляем элемент на новую позицию
-                if (newIndex >= 0 && newIndex <= filteredOrder.length) {
-                    filteredOrder.splice(newIndex, 0, itemId);
-                } else {
-                    filteredOrder.push(itemId);
+                        currentOrder = filteredItems;
+                    }
                 }
 
-                state.searchFilters[searchKey] = filteredOrder;
+                currentOrder = currentOrder.filter(id => id !== itemId);
+
+                if (newIndex >= 0 && newIndex <= currentOrder.length) {
+                    currentOrder.splice(newIndex, 0, itemId);
+                } else {
+                    currentOrder.push(itemId);
+                }
+
+                state.searchFilters[searchKey] = currentOrder;
             }
         } else {
-            // Работаем с общим порядком (без поиска)
             if (state.customOrder.length === 0) {
                 state.customOrder = fullList.map(item => item.id);
             }
 
-            // Выполняем изменение порядка
             if (oldIndex !== newIndex && itemId) {
                 state.customOrder = state.customOrder.filter(id => id !== itemId);
 
