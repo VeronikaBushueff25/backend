@@ -24,63 +24,58 @@ router.get('/', (req, res) => {
     const searchKey = search.toLowerCase();
 
     let filteredList = [...fullList];
+
+    // Фильтрация по поисковому запросу
     if (search) {
         filteredList = filteredList.filter(item =>
             item.value.toLowerCase().includes(searchKey)
         );
+
+        // Числовая сортировка для элементов с цифрами
+        filteredList.sort((a, b) => {
+            // Проверяем, содержат ли строки числа (например, "Элемент 1", "Элемент 10")
+            const aMatch = a.value.match(/(\d+)/);
+            const bMatch = b.value.match(/(\d+)/);
+
+            if (aMatch && bMatch) {
+                const aNum = parseInt(aMatch[0], 10);
+                const bNum = parseInt(bMatch[0], 10);
+                return aNum - bNum;
+            }
+
+            // Запасной вариант, если не содержат числа
+            return a.value.localeCompare(b.value);
+        });
+    } else {
+        // Обычная сортировка, если нет поиска
+        filteredList.sort((a, b) => {
+            return a.numericValue - b.numericValue;
+        });
     }
-    filteredList.sort((a, b) => {
-        return a.numericValue - b.numericValue;
-    });
 
-    if (shouldUseStoredOrder) {
-        if (search && state.searchFilters[searchKey]) {
-            const searchOrderMap = new Map();
-            const customOrder = state.searchFilters[searchKey];
+    // Применяем пользовательский порядок только если нет поиска
+    if (shouldUseStoredOrder && !search && state.customOrder.length > 0) {
+        const positionMap = new Map();
+        state.customOrder.forEach((id, index) => {
+            positionMap.set(id, index);
+        });
 
-            customOrder.forEach((id, index) => {
-                searchOrderMap.set(id, index);
-            });
+        const customOrderedItems = [];
+        const remainingItems = [];
 
-            const customOrderedItems = [];
-            const remainingItems = [];
+        filteredList.forEach(item => {
+            if (positionMap.has(item.id)) {
+                customOrderedItems.push(item);
+            } else {
+                remainingItems.push(item);
+            }
+        });
 
-            filteredList.forEach(item => {
-                if (searchOrderMap.has(item.id)) {
-                    customOrderedItems.push(item);
-                } else {
-                    remainingItems.push(item);
-                }
-            });
+        customOrderedItems.sort((a, b) => {
+            return positionMap.get(a.id) - positionMap.get(b.id);
+        });
 
-            customOrderedItems.sort((a, b) => {
-                return searchOrderMap.get(a.id) - searchOrderMap.get(b.id);
-            });
-
-            filteredList = [...customOrderedItems, ...remainingItems];
-        } else if (state.customOrder.length > 0 && !search) {
-            const positionMap = new Map();
-            state.customOrder.forEach((id, index) => {
-                positionMap.set(id, index);
-            });
-
-            const customOrderedItems = [];
-            const remainingItems = [];
-
-            filteredList.forEach(item => {
-                if (positionMap.has(item.id)) {
-                    customOrderedItems.push(item);
-                } else {
-                    remainingItems.push(item);
-                }
-            });
-
-            customOrderedItems.sort((a, b) => {
-                return positionMap.get(a.id) - positionMap.get(b.id);
-            });
-
-            filteredList = [...customOrderedItems, ...remainingItems];
-        }
+        filteredList = [...customOrderedItems, ...remainingItems];
     }
 
     const totalCount = filteredList.length;
