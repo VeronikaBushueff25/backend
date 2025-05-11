@@ -16,16 +16,6 @@ let state = {
     searchFilters: {}
 };
 
-// Функция для создания числовых эквивалентов для сортировки
-function extractNumericValue(value) {
-    const matches = value.match(/Элемент (\d+)/);
-    if (matches && matches[1]) {
-        return parseInt(matches[1], 10);
-    }
-    return Infinity;
-}
-
-// GET /items?search=...&offset=...&limit=...
 router.get('/', (req, res) => {
     const { search = '', offset = 0, limit = 20, useStoredOrder = 'true' } = req.query;
     const numOffset = parseInt(offset, 10);
@@ -38,13 +28,11 @@ router.get('/', (req, res) => {
         filteredList = filteredList.filter(item =>
             item.value.toLowerCase().includes(searchKey)
         );
-
-        filteredList.sort((a, b) => {
-            return a.numericValue - b.numericValue;
-        });
     }
+    filteredList.sort((a, b) => {
+        return a.numericValue - b.numericValue;
+    });
 
-    // Применяем пользовательский порядок, если он существует и запрошен
     if (shouldUseStoredOrder) {
         if (search && state.searchFilters[searchKey]) {
             const searchOrderMap = new Map();
@@ -54,48 +42,50 @@ router.get('/', (req, res) => {
                 searchOrderMap.set(id, index);
             });
 
-            // Сортируем с учетом пользовательского порядка
-            filteredList.sort((a, b) => {
-                const hasA = searchOrderMap.has(a.id);
-                const hasB = searchOrderMap.has(b.id);
+            const customOrderedItems = [];
+            const remainingItems = [];
 
-                if (hasA && hasB) {
-                    return searchOrderMap.get(a.id) - searchOrderMap.get(b.id);
-                } else if (hasA) {
-                    return -1;
-                } else if (hasB) {
-                    return 1;
+            filteredList.forEach(item => {
+                if (searchOrderMap.has(item.id)) {
+                    customOrderedItems.push(item);
                 } else {
-                    return a.numericValue - b.numericValue;
+                    remainingItems.push(item);
                 }
             });
+
+            customOrderedItems.sort((a, b) => {
+                return searchOrderMap.get(a.id) - searchOrderMap.get(b.id);
+            });
+
+            filteredList = [...customOrderedItems, ...remainingItems];
         } else if (state.customOrder.length > 0 && !search) {
             const positionMap = new Map();
             state.customOrder.forEach((id, index) => {
                 positionMap.set(id, index);
             });
 
-            filteredList.sort((a, b) => {
-                const hasA = positionMap.has(a.id);
-                const hasB = positionMap.has(b.id);
+            const customOrderedItems = [];
+            const remainingItems = [];
 
-                if (hasA && hasB) {
-                    return positionMap.get(a.id) - positionMap.get(b.id);
-                } else if (hasA) {
-                    return -1;
-                } else if (hasB) {
-                    return 1;
+            filteredList.forEach(item => {
+                if (positionMap.has(item.id)) {
+                    customOrderedItems.push(item);
                 } else {
-                    return a.numericValue - b.numericValue;
+                    remainingItems.push(item);
                 }
             });
+
+            customOrderedItems.sort((a, b) => {
+                return positionMap.get(a.id) - positionMap.get(b.id);
+            });
+
+            filteredList = [...customOrderedItems, ...remainingItems];
         }
     }
 
     const totalCount = filteredList.length;
     const pagedItems = filteredList.slice(numOffset, numOffset + numLimit);
 
-    // Проверяем на дубликаты
     const uniqueItemIds = new Set();
     const uniqueItems = pagedItems.filter(item => {
         if (uniqueItemIds.has(item.id)) {
@@ -123,9 +113,7 @@ router.get('/ids', (req, res) => {
     const { chunk = 0, size = 5000 } = req.query;
     const chunkIndex = parseInt(chunk, 10);
     const chunkSize = parseInt(size, 10);
-
     const safeChunkSize = Math.min(chunkSize, 10000);
-
     let orderedIds;
 
     if (state.customOrder && state.customOrder.length > 0) {
@@ -180,20 +168,16 @@ router.post('/save-state', (req, res) => {
                 state.searchFilters[searchKey] = filteredItems.map(item => item.id);
             }
 
-            let currentOrder = state.searchFilters[searchKey];
+            let currentOrder = [...state.searchFilters[searchKey]];
 
-            // Выполняем изменение порядка
             if (oldIndex !== newIndex && itemId) {
                 if (!currentOrder.includes(itemId)) {
-                    const item = fullList.find(item => item.id === itemId);
-                    if (item) {
-                        const filteredItems = fullList
-                            .filter(item => item.value.toLowerCase().includes(searchKey))
-                            .sort((a, b) => a.numericValue - b.numericValue)
-                            .map(item => item.id);
+                    const filteredItems = fullList
+                        .filter(item => item.value.toLowerCase().includes(searchKey))
+                        .sort((a, b) => a.numericValue - b.numericValue)
+                        .map(item => item.id);
 
-                        currentOrder = filteredItems;
-                    }
+                    currentOrder = filteredItems;
                 }
 
                 currentOrder = currentOrder.filter(id => id !== itemId);
@@ -203,7 +187,6 @@ router.post('/save-state', (req, res) => {
                 } else {
                     currentOrder.push(itemId);
                 }
-
                 state.searchFilters[searchKey] = currentOrder;
             }
         } else {
