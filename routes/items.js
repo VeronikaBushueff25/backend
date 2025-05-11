@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-// Создаем массив из 1 000 000 элементов
+// Создаем массив из 1,000,000 элементов
 let fullList = Array.from({ length: 1000000 }, (_, i) => ({
     id: i + 1,
     value: `Элемент ${i + 1}`,
@@ -16,7 +16,6 @@ let state = {
     searchFilters: {}
 };
 
-// GET /items
 router.get('/', (req, res) => {
     const { search = '', offset = 0, limit = 20, useStoredOrder = 'true' } = req.query;
     const numOffset = parseInt(offset, 10);
@@ -31,6 +30,7 @@ router.get('/', (req, res) => {
     }
 
     filteredList.sort((a, b) => a.numericValue - b.numericValue);
+
     let pagedItems = filteredList.slice(numOffset, numOffset + numLimit);
 
     if (useStoredOrder === 'true' && search && state.searchFilters[searchKey]) {
@@ -62,25 +62,102 @@ router.get('/', (req, res) => {
     });
 });
 
+// ЭНДПОИНТ: Получение всех ID элементов (с пагинацией)
+router.get('/ids', (req, res) => {
+    const { chunk = 0, size = 5000 } = req.query;
+    const chunkIndex = parseInt(chunk, 10);
+    const chunkSize = parseInt(size, 10);
+    const safeChunkSize = Math.min(chunkSize, 10000);
+    let orderedIds;
+
+    if (state.customOrder && state.customOrder.length > 0) {
+        const customOrderSet = new Set(state.customOrder);
+
+        const remainingIds = fullList
+            .map(item => item.id)
+            .filter(id => !customOrderSet.has(id));
+
+        orderedIds = [...state.customOrder, ...remainingIds];
+    } else {
+        orderedIds = fullList.map(item => item.id);
+    }
+
+    const totalChunks = Math.ceil(orderedIds.length / safeChunkSize);
+
+    const startIndex = chunkIndex * safeChunkSize;
+    const endIndex = Math.min(startIndex + safeChunkSize, orderedIds.length);
+    const idsChunk = orderedIds.slice(startIndex, endIndex);
+
+    res.json({
+        ids: idsChunk,
+        chunk: chunkIndex,
+        totalChunks: totalChunks,
+        total: orderedIds.length
+    });
+});
+
 // POST /save-state
 router.post('/save-state', (req, res) => {
     const { selectedIds = [], customOrder = [], orderChanges = null, search = '' } = req.body;
-    const searchKey = search.toLowerCase();
+    const searchKey = search ? search.toLowerCase() : '';
 
     state.selectedIds = [...new Set(selectedIds)];
 
-    if (orderChanges && search) {
-        if (!state.searchFilters[searchKey]) {
-            state.searchFilters[searchKey] = [];
+    if (customOrder && customOrder.length > 0) {
+        if (search) {
+            state.searchFilters[searchKey] = [...new Set(customOrder)];
+        } else {
+            state.customOrder = [...new Set(customOrder)];
         }
+    }
+    else if (orderChanges) {
+        const { itemId, oldIndex, newIndex } = orderChanges;
 
-        state.searchFilters[searchKey].push({
-            itemId: orderChanges.itemId,
-            oldIndex: orderChanges.oldIndex,
-            newIndex: orderChanges.newIndex
-        });
-    } else if (!search && customOrder && customOrder.length > 0) {
-        state.customOrder = [...new Set(customOrder)];
+        if (search) {
+            if (!state.searchFilters[searchKey]) {
+                const filteredItems = fullList
+                    .filter(item => item.value.toLowerCase().includes(searchKey))
+                    .sort((a, b) => a.numericValue - b.numericValue);
+
+                state.searchFilters[searchKey] = filteredItems.map(item => item.id);
+            }
+
+            let currentOrder = [...state.searchFilters[searchKey]];
+
+            if (oldIndex !== newIndex && itemId) {
+                if (!currentOrder.includes(itemId)) {
+                    const filteredItems = fullList
+                        .filter(item => item.value.toLowerCase().includes(searchKey))
+                        .sort((a, b) => a.numericValue - b.numericValue)
+                        .map(item => item.id);
+
+                    currentOrder = filteredItems;
+                }
+
+                currentOrder = currentOrder.filter(id => id !== itemId);
+
+                if (newIndex >= 0 && newIndex <= currentOrder.length) {
+                    currentOrder.splice(newIndex, 0, itemId);
+                } else {
+                    currentOrder.push(itemId);
+                }
+                state.searchFilters[searchKey] = currentOrder;
+            }
+        } else {
+            if (state.customOrder.length === 0) {
+                state.customOrder = fullList.map(item => item.id);
+            }
+
+            if (oldIndex !== newIndex && itemId) {
+                state.customOrder = state.customOrder.filter(id => id !== itemId);
+
+                if (newIndex >= 0 && newIndex <= state.customOrder.length) {
+                    state.customOrder.splice(newIndex, 0, itemId);
+                } else {
+                    state.customOrder.push(itemId);
+                }
+            }
+        }
     }
 
     res.sendStatus(200);
@@ -88,49 +165,25 @@ router.post('/save-state', (req, res) => {
 
 // GET /get-state
 router.get('/get-state', (req, res) => {
+    const uniqueSelectedIds = [...new Set(state.selectedIds)];
+
     res.json({
-        selectedIds: [...new Set(state.selectedIds)],
+        selectedIds: uniqueSelectedIds,
         customOrderLength: state.customOrder.length,
         searchFiltersCount: Object.keys(state.searchFilters).length
     });
 });
 
-// GET /ids — получить все ID (порядок только общий)
-router.get('/ids', (req, res) => {
-    const { chunk = 0, size = 5000 } = req.query;
-    const chunkIndex = parseInt(chunk, 10);
-    const chunkSize = Math.min(parseInt(size, 10), 10000);
-
-    let orderedIds;
-    if (state.customOrder.length > 0) {
-        const customSet = new Set(state.customOrder);
-        const remaining = fullList.map(x => x.id).filter(id => !customSet.has(id));
-        orderedIds = [...state.customOrder, ...remaining];
-    } else {
-        orderedIds = fullList.map(x => x.id);
-    }
-
-    const start = chunkIndex * chunkSize;
-    const end = Math.min(start + chunkSize, orderedIds.length);
-
-    res.json({
-        ids: orderedIds.slice(start, end),
-        chunk: chunkIndex,
-        totalChunks: Math.ceil(orderedIds.length / chunkSize),
-        total: orderedIds.length
-    });
-});
-
-// GET /custom-order — не используется при новом подходе, но можно оставить
+// ЭНДПОИНТ: Получение фрагмента пользовательского порядка
 router.get('/custom-order', (req, res) => {
     const { start = 0, count = 1000, search = '' } = req.query;
-    const searchKey = search.toLowerCase();
     const startIndex = parseInt(start, 10);
     const itemCount = Math.min(parseInt(count, 10), 5000);
+    const searchKey = search ? search.toLowerCase() : '';
 
-    let orderToUse = [];
+    let orderToUse;
     if (search && state.searchFilters[searchKey]) {
-        orderToUse = state.searchFilters[searchKey].map(change => change.itemId);
+        orderToUse = state.searchFilters[searchKey];
     } else {
         orderToUse = state.customOrder;
     }
