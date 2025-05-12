@@ -25,13 +25,11 @@ router.get('/', (req, res) => {
 
     let filteredList = [...fullList];
 
-    // Фильтрация по поисковому запросу
     if (search) {
         filteredList = filteredList.filter(item =>
             item.value.toLowerCase().includes(searchKey)
         );
 
-        // Числовая сортировка для элементов с цифрами
         filteredList.sort((a, b) => {
             // Проверяем, содержат ли строки числа (например, "Элемент 1", "Элемент 10")
             const aMatch = a.value.match(/(\d+)/);
@@ -43,39 +41,60 @@ router.get('/', (req, res) => {
                 return aNum - bNum;
             }
 
-            // Запасной вариант, если не содержат числа
             return a.value.localeCompare(b.value);
         });
+
+        if (shouldUseStoredOrder && state.searchFilters[searchKey] && state.searchFilters[searchKey].length > 0) {
+            const positionMap = new Map();
+            state.searchFilters[searchKey].forEach((id, index) => {
+                positionMap.set(id, index);
+            });
+
+            const customOrderedItems = [];
+            const remainingItems = [];
+
+            filteredList.forEach(item => {
+                if (positionMap.has(item.id)) {
+                    customOrderedItems.push(item);
+                } else {
+                    remainingItems.push(item);
+                }
+            });
+
+            customOrderedItems.sort((a, b) => {
+                return positionMap.get(a.id) - positionMap.get(b.id);
+            });
+
+            filteredList = [...customOrderedItems, ...remainingItems];
+        }
     } else {
-        // Обычная сортировка, если нет поиска
         filteredList.sort((a, b) => {
             return a.numericValue - b.numericValue;
         });
-    }
 
-    // Применяем пользовательский порядок только если нет поиска
-    if (shouldUseStoredOrder && !search && state.customOrder.length > 0) {
-        const positionMap = new Map();
-        state.customOrder.forEach((id, index) => {
-            positionMap.set(id, index);
-        });
+        if (shouldUseStoredOrder && state.customOrder.length > 0) {
+            const positionMap = new Map();
+            state.customOrder.forEach((id, index) => {
+                positionMap.set(id, index);
+            });
 
-        const customOrderedItems = [];
-        const remainingItems = [];
+            const customOrderedItems = [];
+            const remainingItems = [];
 
-        filteredList.forEach(item => {
-            if (positionMap.has(item.id)) {
-                customOrderedItems.push(item);
-            } else {
-                remainingItems.push(item);
-            }
-        });
+            filteredList.forEach(item => {
+                if (positionMap.has(item.id)) {
+                    customOrderedItems.push(item);
+                } else {
+                    remainingItems.push(item);
+                }
+            });
 
-        customOrderedItems.sort((a, b) => {
-            return positionMap.get(a.id) - positionMap.get(b.id);
-        });
+            customOrderedItems.sort((a, b) => {
+                return positionMap.get(a.id) - positionMap.get(b.id);
+            });
 
-        filteredList = [...customOrderedItems, ...remainingItems];
+            filteredList = [...customOrderedItems, ...remainingItems];
+        }
     }
 
     const totalCount = filteredList.length;
