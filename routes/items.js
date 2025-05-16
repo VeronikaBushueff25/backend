@@ -11,7 +11,9 @@ let fullList = Array.from({ length: 1000000 }, (_, i) => ({
 // Состояние приложения
 let state = {
     selectedIds: [],
-    customOrder: []
+    customOrder: [],
+    // Новая структура для хранения контекстных позиций
+    contextualPositions: []
 };
 
 // GET /items?search=...&offset=...&limit=...
@@ -23,27 +25,128 @@ router.get('/', (req, res) => {
 
     let filteredList = [...fullList];
 
-    // Применяем пользовательский порядок, если он существует и запрошен
-    if (shouldUseStoredOrder && state.customOrder.length > 0) {
-        const positionMap = new Map();
-        const uniqueOrder = [...new Set(state.customOrder)];
-
-        uniqueOrder.forEach((id, index) => {
-            positionMap.set(id, index);
-        });
-
-        filteredList.sort((a, b) => {
-            const posA = positionMap.has(a.id) ? positionMap.get(a.id) : a.position;
-            const posB = positionMap.has(b.id) ? positionMap.get(b.id) : b.position;
-            return posA - posB;
-        });
-    }
-
-    // Поиск
+    // Сначала фильтруем по поиску до применения сортировки
     if (search) {
         filteredList = filteredList.filter(item =>
             item.value.toLowerCase().includes(search.toLowerCase())
         );
+    }
+
+    // Применяем пользовательский порядок и контекстные позиции
+    if (shouldUseStoredOrder) {
+        // Сперва применяем контекстные позиции
+        if (state.contextualPositions.length > 0) {
+            // Создаем карту для быстрого поиска элементов
+            const itemMap = new Map(filteredList.map(item => [item.id, item]));
+
+            // Сначала создаем базовый список в исходном порядке
+            let baseOrderIds = filteredList.map(item => item.id);
+
+            // Обрабатываем контекстные позиции от новых к старым (по timestamp)
+            const sortedContextPositions = [...state.contextualPositions]
+                .sort((a, b) => b.timestamp - a.timestamp);
+
+            // Для каждой контекстной позиции
+            for (const contextPos of sortedContextPositions) {
+                const { itemId, prevItemId, nextItemId } = contextPos;
+
+                // Проверяем, существует ли перемещаемый элемент в отфильтрованном списке
+                if (!itemMap.has(itemId)) continue;
+
+                // Удаляем элемент из текущей позиции
+                baseOrderIds = baseOrderIds.filter(id => id !== itemId);
+
+                // Определяем новую позицию для вставки
+                if (prevItemId !== null && nextItemId !== null) {
+                    // Случай 1: Есть и предыдущий, и следующий элементы
+                    if (itemMap.has(prevItemId) && itemMap.has(nextItemId)) {
+                        // Ищем индекс следующего элемента (должен быть после предыдущего)
+                        const prevIndex = baseOrderIds.indexOf(prevItemId);
+                        const nextIndex = baseOrderIds.indexOf(nextItemId);
+
+                        if (prevIndex !== -1 && nextIndex !== -1 && nextIndex > prevIndex) {
+                            // Идеальный случай - оба элемента есть и в правильном порядке
+                            baseOrderIds.splice(prevIndex + 1, 0, itemId);
+                        } else if (prevIndex !== -1) {
+                            // Только предыдущий элемент найден
+                            baseOrderIds.splice(prevIndex + 1, 0, itemId);
+                        } else if (nextIndex !== -1) {
+                            // Только следующий элемент найден
+                            baseOrderIds.splice(nextIndex, 0, itemId);
+                        } else {
+                            // Оба элемента не найдены - добавляем в начало
+                            baseOrderIds.unshift(itemId);
+                        }
+                    } else if (itemMap.has(prevItemId)) {
+                        // Только предыдущий элемент существует
+                        const index = baseOrderIds.indexOf(prevItemId);
+                        if (index !== -1) {
+                            baseOrderIds.splice(index + 1, 0, itemId);
+                        } else {
+                            baseOrderIds.unshift(itemId);
+                        }
+                    } else if (itemMap.has(nextItemId)) {
+                        // Только следующий элемент существует
+                        const index = baseOrderIds.indexOf(nextItemId);
+                        if (index !== -1) {
+                            baseOrderIds.splice(index, 0, itemId);
+                        } else {
+                            baseOrderIds.unshift(itemId);
+                        }
+                    } else {
+                        // Ни один из соседних элементов не существует
+                        baseOrderIds.unshift(itemId);
+                    }
+                } else if (prevItemId !== null) {
+                    // Случай 2: Есть только предыдущий элемент
+                    if (itemMap.has(prevItemId)) {
+                        const index = baseOrderIds.indexOf(prevItemId);
+                        if (index !== -1) {
+                            baseOrderIds.splice(index + 1, 0, itemId);
+                        } else {
+                            baseOrderIds.push(itemId);
+                        }
+                    } else {
+                        baseOrderIds.push(itemId);
+                    }
+                } else if (nextItemId !== null) {
+                    // Случай 3: Есть только следующий элемент
+                    if (itemMap.has(nextItemId)) {
+                        const index = baseOrderIds.indexOf(nextItemId);
+                        if (index !== -1) {
+                            baseOrderIds.splice(index, 0, itemId);
+                        } else {
+                            baseOrderIds.unshift(itemId);
+                        }
+                    } else {
+                        baseOrderIds.unshift(itemId);
+                    }
+                } else {
+                    // Случай 4: Нет контекстной информации
+                    baseOrderIds.unshift(itemId);
+                }
+            }
+
+            // Преобразуем обратно в список элементов
+            filteredList = baseOrderIds
+                .map(id => itemMap.get(id))
+                .filter(item => item !== undefined);
+        }
+        // Затем применяем обычную сортировку по customOrder, если есть
+        else if (state.customOrder.length > 0) {
+            const positionMap = new Map();
+            const uniqueOrder = [...new Set(state.customOrder)];
+
+            uniqueOrder.forEach((id, index) => {
+                positionMap.set(id, index);
+            });
+
+            filteredList.sort((a, b) => {
+                const posA = positionMap.has(a.id) ? positionMap.get(a.id) : a.position;
+                const posB = positionMap.has(b.id) ? positionMap.get(b.id) : b.position;
+                return posA - posB;
+            });
+        }
     }
 
     const totalCount = filteredList.length;
@@ -118,8 +221,9 @@ router.post('/save-state', (req, res) => {
         state.customOrder = [...new Set(customOrder)];
     }
     else if (orderChanges) {
-        const { itemId, oldIndex, newIndex } = orderChanges;
+        const { itemId, oldIndex, newIndex, contextItems } = orderChanges;
 
+        // Обновляем customOrder для обратной совместимости
         if (state.customOrder.length === 0) {
             state.customOrder = [...new Set(fullList.map(item => item.id))];
         } else {
@@ -136,6 +240,32 @@ router.post('/save-state', (req, res) => {
                 state.customOrder.push(itemId);
             }
         }
+
+        // Сохраняем контекстную информацию, если она была предоставлена
+        if (contextItems && (contextItems.prevItemId !== null || contextItems.nextItemId !== null)) {
+            // Удаляем старую запись о позиции элемента, если она существует
+            state.contextualPositions = state.contextualPositions.filter(
+                item => item.itemId !== itemId
+            );
+
+            // Проверяем, что хотя бы один из контекстных элементов не равен null
+            // Добавляем новую запись о контекстной позиции
+            state.contextualPositions.push({
+                itemId,
+                prevItemId: contextItems.prevItemId,
+                nextItemId: contextItems.nextItemId,
+                timestamp: Date.now() // Добавляем временную метку для отслеживания последних изменений
+            });
+
+            // Сохраняем максимум 1000 последних изменений
+            if (state.contextualPositions.length > 1000) {
+                state.contextualPositions.sort((a, b) => b.timestamp - a.timestamp);
+                state.contextualPositions = state.contextualPositions.slice(0, 1000);
+            }
+
+            // Логирование для отладки
+            console.log(`Saved contextual position: Item ${itemId} between ${contextItems.prevItemId} and ${contextItems.nextItemId}`);
+        }
     }
 
     res.sendStatus(200);
@@ -148,7 +278,8 @@ router.get('/get-state', (req, res) => {
 
     res.json({
         selectedIds: uniqueSelectedIds,
-        customOrderLength: uniqueCustomOrder.length
+        customOrderLength: uniqueCustomOrder.length,
+        contextualPositionsCount: state.contextualPositions.length
     });
 });
 
